@@ -34,16 +34,18 @@ def _mean_ndcg(y_true, y_pred, group_id):
     return np.mean(scores) if scores else 0.0
 
 
-def train_and_predict(train_df, test_df, n_splits=5, **kwargs):
+def train_and_predict(train_df, test_df, feature_cols=None, n_splits=5, **kwargs):
     """
     Обучение CatBoostRanker с GroupKFold, YetiRank.
+    feature_cols: список фичей (по умолчанию FEATURE_COLS).
     kwargs переопределяют DEFAULT_PARAMS.
     """
     params = {**DEFAULT_PARAMS, **kwargs}
-    X_train = train_df[FEATURE_COLS]
+    cols = feature_cols if feature_cols is not None else FEATURE_COLS
+    X_train = train_df[cols]
     y_train = train_df["relevance"].values
     group_id_train = train_df["query_id"].values
-    X_test = test_df[FEATURE_COLS]
+    X_test = test_df[cols]
 
     gkf = GroupKFold(n_splits=n_splits)
     oof_preds = np.zeros(len(train_df))

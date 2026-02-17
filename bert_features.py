@@ -1,6 +1,6 @@
 """
 BERT-эмбеддинги для фичей query vs org_name.
-Использует sentence-transformers (мультиязычная модель).
+Использует intfloat/multilingual-e5-base (query/passage prefixes для retrieval).
 """
 
 import numpy as np
@@ -18,24 +18,24 @@ def _cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
 
 def build_bert_features(
     df: pd.DataFrame,
-    model_name: str = "paraphrase-multilingual-MiniLM-L12-v2",
+    model_name: str = "intfloat/multilingual-e5-base",
     batch_size: int = 64,
-    max_length: int = 128,
 ):
     """
     Строит BERT-фичи: cosine_sim и dot_product между эмбеддингами query и org_name.
+    E5 использует "query: " / "passage: " префиксы для retrieval.
     Возвращает (bert_cosine_sim, bert_dot_product).
     """
     from sentence_transformers import SentenceTransformer
 
     model = SentenceTransformer(model_name, device="cpu")
 
-    queries = df["query"].fillna("").astype(str).tolist()
-    org_names = df["org_name"].fillna("").astype(str).tolist()
+    queries_raw = df["query"].fillna("").astype(str).tolist()
+    org_names_raw = df["org_name"].fillna("").astype(str).tolist()
 
-    # Обрезаем длинные строки
-    queries = [q[:500] for q in queries]
-    org_names = [o[:500] for o in org_names]
+    # E5: префиксы для retrieval (query vs passage)
+    queries = ["query: " + (q[:500] if len(q) > 500 else q) for q in queries_raw]
+    org_names = ["passage: " + (o[:500] if len(o) > 500 else o) for o in org_names_raw]
 
     q_embs = model.encode(queries, batch_size=batch_size, show_progress_bar=True)
     o_embs = model.encode(org_names, batch_size=batch_size, show_progress_bar=True)
