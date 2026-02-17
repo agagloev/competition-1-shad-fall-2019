@@ -6,6 +6,9 @@ import re
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
+
+tqdm.pandas()
 
 
 def tokenize(text):
@@ -23,6 +26,34 @@ def tokenize_list(text):
         return []
     text = str(text).lower()
     return re.findall(r"\b\w+\b", text)
+
+
+def build_idf_from_corpus(corpus, min_df=2):
+    """Строит IDF по корпусу (список строк). Возвращает dict: word -> idf."""
+    from collections import Counter
+    doc_count = Counter()
+    n_docs = 0
+    for doc in corpus:
+        tokens = tokenize(doc)
+        for t in tokens:
+            doc_count[t] += 1
+        n_docs += 1
+    idf = {}
+    for w, df in doc_count.items():
+        if df >= min_df:
+            idf[w] = np.log((n_docs + 1) / (df + 1)) + 1
+    return idf
+
+
+def idf_weighted_overlap(query_tokens, org_tokens, idf_dict):
+    """IDF-взвешенное пересечение: sum(idf[matching]) / sum(idf[query])"""
+    if not query_tokens or not idf_dict:
+        return 0.0
+    query_idf = sum(idf_dict.get(t, 1.0) for t in query_tokens)
+    if query_idf < 1e-9:
+        return 0.0
+    match_idf = sum(idf_dict.get(t, 1.0) for t in (query_tokens & org_tokens))
+    return match_idf / query_idf
 
 
 def ngram_tokens(text, n=2):
@@ -116,6 +147,16 @@ def extract_text_features(row):
     }
 
 
+def build_idf_features(df, idf_dict):
+    """IDF-взвешенное совпадение query и org_name (BM25-стиль)"""
+    def calc(row):
+        qt = tokenize(row["query"])
+        ot = tokenize(row["org_name"])
+        return idf_weighted_overlap(qt, ot, idf_dict)
+
+    return df.apply(calc, axis=1).tolist()
+
+
 def build_clicks_features(df, clicks_dict):
     """
     clicks_dict: org_id -> list of query strings
@@ -143,7 +184,7 @@ def build_clicks_features(df, clicks_dict):
             best_j = max(best_j, jaccard_sim(query_tokens, tokenize(oq)))
         return 0.0, num_clicks, click_jaccard, best_j
 
-    result = df.apply(calc_row, axis=1)
+    result = df.progress_apply(calc_row, axis=1)
     return [r[0] for r in result], [r[1] for r in result], [r[2] for r in result], [r[3] for r in result]
 
 
@@ -238,7 +279,7 @@ def build_rubric_features(df, org_info, rubric_info):
         overlap = len(query_tokens & rubric_tokens) / max(len(query_tokens), 1)
         return jaccard, overlap, num_rubrics, phrase_match
 
-    result = df.apply(calc, axis=1)
+    result = df.progress_apply(calc, axis=1)
     return [r[0] for r in result], [r[1] for r in result], [r[2] for r in result], [r[3] for r in result]
 
 
@@ -292,17 +333,26 @@ FEATURE_COLS = [
     "query_in_org_str", "org_in_query_str", "query_len", "org_len",
     "matching_words", "word_count_query", "word_count_org", "cosine_sim", "bigram_jaccard",
     "avg_word_len_query", "avg_word_len_org",
+    "idf_overlap",
     "click_score", "num_clicks", "click_jaccard", "click_best_jaccard",
     "region",
     "rubric_jaccard", "rubric_overlap", "num_rubrics", "rubric_phrase_match",
     "org_names_best_jaccard", "address_jaccard", "geo_distance", "num_org_names",
     "window_area", "geo_in_window",
     "jaccard_x_click", "jaccard_x_geo_close",
+    "bert_cosine", "bert_dot",
 ]
 
 
-def extract_features(df, clicks_dict=None, org_info=None, rubric_info=None):
-    """Извлечение всех фичей"""
+def extract_features(
+    df,
+    clicks_dict=None,
+    org_info=None,
+    rubric_info=None,
+    idf_dict=None,
+    use_bert=False,
+):
+    """Извлечение всех фичей. idf_dict — из build_idf_from_corpus(train["org_name"])."""
     # Текстовые фичи (query vs org_name)
     text_feats = df.apply(extract_text_features, axis=1)
     text_feat_names = [
@@ -314,8 +364,15 @@ def extract_features(df, clicks_dict=None, org_info=None, rubric_info=None):
     for name in text_feat_names:
         df[name] = [f[name] for f in text_feats]
 
+    # IDF-взвешенная фича (BM25-стиль)
+    if idf_dict is not None:
+        df["idf_overlap"] = build_idf_features(df, idf_dict)
+    else:
+        df["idf_overlap"] = 0.0
+
     # Clicks фичи
     if clicks_dict is not None:
+        print("[features] Clicks фичи...")
         c0, c1, c2, c3 = build_clicks_features(df, clicks_dict)
         df["click_score"] = c0
         df["num_clicks"] = np.log1p(c1)
@@ -329,6 +386,7 @@ def extract_features(df, clicks_dict=None, org_info=None, rubric_info=None):
 
     # Rubric фичи
     if org_info is not None and rubric_info is not None:
+        print("[features] Rubric фичи...")
         r0, r1, r2, r3 = build_rubric_features(df, org_info, rubric_info)
         df["rubric_jaccard"] = r0
         df["rubric_overlap"] = r1
@@ -363,5 +421,16 @@ def extract_features(df, clicks_dict=None, org_info=None, rubric_info=None):
     geo_close = (df["geo_distance"] < 10).astype(float)
     df["jaccard_x_click"] = df["jaccard"] * df["click_score"]
     df["jaccard_x_geo_close"] = df["jaccard"] * geo_close
+
+    # BERT фичи (опционально, долго)
+    if use_bert:
+        print("[features] BERT фичи (загрузка модели + encode)...")
+        from bert_features import build_bert_features
+        bc, bd = build_bert_features(df)
+        df["bert_cosine"] = bc
+        df["bert_dot"] = bd
+    else:
+        df["bert_cosine"] = 0.0
+        df["bert_dot"] = 0.0
 
     return df
