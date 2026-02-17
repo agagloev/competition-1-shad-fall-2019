@@ -19,16 +19,8 @@ OUTPUT_PATH = DATA_DIR / "selected_features.json"
 
 
 def _mean_ndcg(y_true, y_pred, group_id):
-    from sklearn.metrics import ndcg_score
-    groups = pd.Series(group_id).unique()
-    scores = []
-    for g in groups:
-        mask = group_id == g
-        y_g = np.asarray(y_true)[mask].reshape(1, -1)
-        p_g = y_pred[mask].reshape(1, -1)
-        if y_g.shape[1] > 1:
-            scores.append(ndcg_score(y_g, p_g, k=min(10, y_g.shape[1])))
-    return np.mean(scores) if scores else 0.0
+    from metrics import mean_ndcg_at_k
+    return mean_ndcg_at_k(y_true, y_pred, group_id, k=10, method=1)
 
 
 def _train_fold_and_importance(X_tr, y_tr, g_tr, X_val, y_val, g_val, feature_names):

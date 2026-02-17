@@ -31,10 +31,21 @@ def main():
         default=None,
         help="Путь к selected_features.json (или auto — если есть)",
     )
+    parser.add_argument(
+        "--all-features",
+        action="store_true",
+        help="Использовать все фичи (без отбора)",
+    )
+    parser.add_argument(
+        "--n-folds",
+        type=int,
+        default=7,
+        help="Количество фолдов GroupKFold (default 7)",
+    )
     args = parser.parse_args()
 
     feature_cols = None
-    if args.features:
+    if not args.all_features and args.features:
         p = Path(args.features) if args.features != "auto" else DATA_DIR / "selected_features.json"
         if p.exists():
             with open(p, encoding="utf-8") as f:
@@ -52,6 +63,7 @@ def main():
         test = pd.read_parquet(test_path)
         if feature_cols is None:
             feature_cols = [c for c in FEATURE_COLS if c in train.columns]
+            print(f"Используем все фичи ({len(feature_cols)})")
     else:
         print("[1/5] Загрузка данных...")
         data = load_all()
@@ -71,11 +83,15 @@ def main():
         train = extract_features(train, all_clicks, all_org, all_rubric, idf_dict=idf_dict, use_bert=True)
         print("[4/5] Извлечение фичей (test)...")
         test = extract_features(test, all_clicks, all_org, all_rubric, idf_dict=idf_dict, use_bert=True)
-        feature_cols = feature_cols or [c for c in FEATURE_COLS if c in train.columns]
+        if feature_cols is None:
+            feature_cols = [c for c in FEATURE_COLS if c in train.columns]
+            print(f"Используем все фичи ({len(feature_cols)})")
 
     step = "[2/3]" if args.precomputed else "[5/5]"
-    print(f"\n{step} Обучение CatBoostRanker (5-fold GroupKFold, YetiRank)...")
-    _, test_preds = train_and_predict(train, test, feature_cols=feature_cols)
+    print(f"\n{step} Обучение CatBoostRanker ({args.n_folds}-fold GroupKFold, YetiRankPairwise)...")
+    _, test_preds = train_and_predict(
+        train, test, feature_cols=feature_cols, n_splits=args.n_folds
+    )
 
     print("\nСохранение submission...")
     submission = save_submission(test, test_preds)

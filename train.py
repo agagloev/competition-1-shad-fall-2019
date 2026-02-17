@@ -6,9 +6,10 @@ import numpy as np
 import pandas as pd
 import catboost as cb
 from sklearn.model_selection import GroupKFold
-from sklearn.metrics import mean_squared_error, ndcg_score
+from sklearn.metrics import mean_squared_error
 
 from features import FEATURE_COLS
+from metrics import mean_ndcg_at_k
 
 # Дефолтные параметры модели (из предыдущей версии)
 DEFAULT_PARAMS = {
@@ -21,17 +22,9 @@ DEFAULT_PARAMS = {
 }
 
 
-def _mean_ndcg(y_true, y_pred, group_id):
-    """Средний NDCG@10 по группам (query_id)"""
-    groups = pd.Series(group_id).unique()
-    scores = []
-    for g in groups:
-        mask = group_id == g
-        y_g = np.asarray(y_true)[mask].reshape(1, -1)
-        p_g = y_pred[mask].reshape(1, -1)
-        if y_g.shape[1] > 1:
-            scores.append(ndcg_score(y_g, p_g, k=min(10, y_g.shape[1])))
-    return np.mean(scores) if scores else 0.0
+def _mean_ndcg(y_true, y_pred, group_id, k=10):
+    """Средний NDCG@k по референсной формуле (bwhite, method=1)."""
+    return mean_ndcg_at_k(y_true, y_pred, group_id, k=k, method=1)
 
 
 def train_and_predict(train_df, test_df, feature_cols=None, n_splits=5, **kwargs):
