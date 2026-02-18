@@ -11,7 +11,9 @@ from sklearn.metrics import mean_squared_error
 from features import FEATURE_COLS
 from metrics import mean_ndcg_at_k
 
-# Дефолтные параметры модели (из предыдущей версии)
+# Единый источник для train и feature_selection
+DEFAULT_N_SPLITS = 7
+
 DEFAULT_PARAMS = {
     "iterations": 500,
     "learning_rate": 0.05,
@@ -19,7 +21,22 @@ DEFAULT_PARAMS = {
     "min_data_in_leaf": 20,
     "subsample": 0.8,
     "early_stopping_rounds": 50,
+    "loss_function": "LambdaMart",
 }
+
+
+def get_rank_model_params(**overrides):
+    """Параметры для CatBoostRanker. Используется в train и feature_selection."""
+    p = {**DEFAULT_PARAMS, **overrides}
+    return {
+        "iterations": p["iterations"],
+        "learning_rate": p["learning_rate"],
+        "depth": p["depth"],
+        "min_data_in_leaf": p["min_data_in_leaf"],
+        "subsample": p["subsample"],
+        "verbose": p.get("verbose", 0),
+        "loss_function": p["loss_function"],
+    }
 
 
 def _mean_ndcg(y_true, y_pred, group_id, k=10):
@@ -27,12 +44,14 @@ def _mean_ndcg(y_true, y_pred, group_id, k=10):
     return mean_ndcg_at_k(y_true, y_pred, group_id, k=k, method=1)
 
 
-def train_and_predict(train_df, test_df, feature_cols=None, n_splits=5, **kwargs):
+def train_and_predict(train_df, test_df, feature_cols=None, n_splits=None, **kwargs):
     """
     Обучение CatBoostRanker с GroupKFold, LambdaMart.
     feature_cols: список фичей (по умолчанию FEATURE_COLS).
     kwargs переопределяют DEFAULT_PARAMS.
     """
+    if n_splits is None:
+        n_splits = DEFAULT_N_SPLITS
     params = {**DEFAULT_PARAMS, **kwargs}
     cols = feature_cols if feature_cols is not None else FEATURE_COLS
     X_train = train_df[cols]
@@ -44,15 +63,7 @@ def train_and_predict(train_df, test_df, feature_cols=None, n_splits=5, **kwargs
     oof_preds = np.zeros(len(train_df))
     test_preds = np.zeros(len(test_df))
 
-    model_params = {
-        "iterations": params["iterations"],
-        "learning_rate": params["learning_rate"],
-        "depth": params.get("depth", 6),
-        "min_data_in_leaf": params.get("min_data_in_leaf", 20),
-        "subsample": params.get("subsample", 0.8),
-        "verbose": 0,
-        "loss_function": "LambdaMart",
-    }
+    model_params = get_rank_model_params(**params)
 
     for fold, (tr_idx, val_idx) in enumerate(gkf.split(X_train, y_train, group_id_train)):
         X_tr = X_train.iloc[tr_idx]

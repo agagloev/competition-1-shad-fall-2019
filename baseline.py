@@ -13,7 +13,7 @@ warnings.filterwarnings("ignore")
 
 from data import load_all, save_submission
 from features import extract_features, build_idf_from_corpus, FEATURE_COLS
-from train import train_and_predict
+from train import train_and_predict, DEFAULT_N_SPLITS
 
 DATA_DIR = Path(__file__).parent
 
@@ -39,8 +39,8 @@ def main():
     parser.add_argument(
         "--n-folds",
         type=int,
-        default=7,
-        help="Количество фолдов GroupKFold (default 7)",
+        default=None,
+        help=f"Количество фолдов GroupKFold (default {DEFAULT_N_SPLITS})",
     )
     args = parser.parse_args()
 
@@ -87,10 +87,11 @@ def main():
             feature_cols = [c for c in FEATURE_COLS if c in train.columns]
             print(f"Используем все фичи ({len(feature_cols)})")
 
+    n_splits = args.n_folds if args.n_folds is not None else DEFAULT_N_SPLITS
     step = "[2/3]" if args.precomputed else "[5/5]"
-    print(f"\n{step} Обучение CatBoostRanker ({args.n_folds}-fold GroupKFold, LambdaMart)...")
+    print(f"\n{step} Обучение CatBoostRanker ({n_splits}-fold GroupKFold, LambdaMart)...")
     _, test_preds = train_and_predict(
-        train, test, feature_cols=feature_cols, n_splits=args.n_folds
+        train, test, feature_cols=feature_cols, n_splits=n_splits
     )
 
     print("\nСохранение submission...")

@@ -12,6 +12,7 @@ import pandas as pd
 from sklearn.model_selection import GroupKFold
 
 from features import FEATURE_COLS
+from train import DEFAULT_PARAMS, DEFAULT_N_SPLITS, get_rank_model_params
 
 DATA_DIR = Path(__file__).parent
 FEATURES_DIR = DATA_DIR / "precomputed"
@@ -26,19 +27,13 @@ def _mean_ndcg(y_true, y_pred, group_id):
 def _train_fold_and_importance(X_tr, y_tr, g_tr, X_val, y_val, g_val, feature_names):
     """Один фолд: обучение и важность фичей."""
     model = cb.CatBoostRanker(
-        iterations=500,
-        learning_rate=0.05,
-        depth=6,
-        min_data_in_leaf=20,
-        subsample=0.8,
-        verbose=0,
-        loss_function="YetiRank:permutations=10",
+        **get_rank_model_params(),
         random_seed=42,
     )
     model.fit(
         X_tr, y_tr, group_id=g_tr,
         eval_set=cb.Pool(X_val, y_val, group_id=g_val),
-        early_stopping_rounds=50,
+        early_stopping_rounds=DEFAULT_PARAMS["early_stopping_rounds"],
     )
     train_pool = cb.Pool(X_tr, y_tr, group_id=g_tr)
     imp = model.get_feature_importance(train_pool)
@@ -49,12 +44,14 @@ def select_by_importance_threshold(
     train_df,
     feature_cols,
     min_importance_pct=1.0,
-    n_splits=5,
+    n_splits=None,
 ):
     """
     Удаляет фичи с важностью < min_importance_pct от средней.
     Возвращает отфильтрованный список фичей.
     """
+    if n_splits is None:
+        n_splits = DEFAULT_N_SPLITS
     X = train_df[feature_cols]
     y = train_df["relevance"].values
     g = train_df["query_id"].values
@@ -81,13 +78,15 @@ def select_by_importance_threshold(
 def select_by_rfe(
     train_df,
     feature_cols,
-    n_splits=5,
+    n_splits=None,
     ndcg_tol=0.001,
 ):
     """
     Recursive Feature Elimination: убираем по одной худшей фиче,
     пока OOF NDCG не упадёт больше чем на ndcg_tol.
     """
+    if n_splits is None:
+        n_splits = DEFAULT_N_SPLITS
     X = train_df[feature_cols]
     y = train_df["relevance"].values
     g = train_df["query_id"].values
@@ -102,19 +101,13 @@ def select_by_rfe(
             X_tr = X[cols].iloc[tr_idx]
             X_val = X[cols].iloc[val_idx]
             model = cb.CatBoostRanker(
-                iterations=500,
-                learning_rate=0.05,
-                depth=6,
-                min_data_in_leaf=20,
-                subsample=0.8,
-                verbose=0,
-                loss_function="YetiRank:permutations=10",
+                **get_rank_model_params(),
                 random_seed=42 + fold,
             )
             model.fit(
                 X_tr, y[tr_idx], group_id=g[tr_idx],
                 eval_set=cb.Pool(X_val, y[val_idx], group_id=g[val_idx]),
-                early_stopping_rounds=50,
+                early_stopping_rounds=DEFAULT_PARAMS["early_stopping_rounds"],
             )
             oof[val_idx] = model.predict(X_val)
             train_pool = cb.Pool(X_tr, y[tr_idx], group_id=g[tr_idx])
