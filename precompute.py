@@ -3,7 +3,7 @@
 Фичи складываются по группам в отдельные файлы — при добавлении новой фичи
 пересчитывается только её группа (precompute --only text).
 
-Запускать перед feature_selection и baseline --precomputed.
+Запускать перед baseline --precomputed.
 """
 
 import argparse

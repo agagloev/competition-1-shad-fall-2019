@@ -4,7 +4,6 @@ Baseline для Kaggle Competition 1 SHAD Fall 2019
 """
 
 import argparse
-import json
 from pathlib import Path
 import warnings
 
@@ -24,18 +23,7 @@ def main():
     parser.add_argument(
         "--precomputed",
         action="store_true",
-        help="Загрузить precomputed/precomputed фичи из parquet",
-    )
-    parser.add_argument(
-        "--features",
-        type=str,
-        default=None,
-        help="Путь к selected_features.json (или auto — если есть)",
-    )
-    parser.add_argument(
-        "--all-features",
-        action="store_true",
-        help="Использовать все фичи (без отбора)",
+        help="Загрузить precomputed фичи из parquet",
     )
     parser.add_argument(
         "--n-folds",
@@ -52,14 +40,6 @@ def main():
     )
     args = parser.parse_args()
 
-    feature_cols = None
-    if not args.all_features and args.features:
-        p = Path(args.features) if args.features != "auto" else DATA_DIR / "selected_features.json"
-        if p.exists():
-            with open(p, encoding="utf-8") as f:
-                feature_cols = json.load(f)
-            print(f"Используем {len(feature_cols)} фичей из {p.name}")
-
     if args.precomputed:
         feat_dir = DATA_DIR / "precomputed"
         if has_modular_precomputed():
@@ -75,9 +55,8 @@ def main():
             raise FileNotFoundError(
                 "Нет precomputed фичей. Запустите: python precompute.py [--no-bert]"
             )
-        if feature_cols is None:
-            feature_cols = [c for c in FEATURE_COLS if c in train.columns]
-            print(f"Используем все фичи ({len(feature_cols)})")
+        feature_cols = [c for c in FEATURE_COLS if c in train.columns]
+        print(f"Используем все фичи ({len(feature_cols)})")
     else:
         print("[1/5] Загрузка данных...")
         data = load_all()
@@ -97,9 +76,8 @@ def main():
         train = extract_features(train, all_clicks, all_org, all_rubric, idf_dict=idf_dict, use_bert=True)
         print("[4/5] Извлечение фичей (test)...")
         test = extract_features(test, all_clicks, all_org, all_rubric, idf_dict=idf_dict, use_bert=True)
-        if feature_cols is None:
-            feature_cols = [c for c in FEATURE_COLS if c in train.columns]
-            print(f"Используем все фичи ({len(feature_cols)})")
+        feature_cols = [c for c in FEATURE_COLS if c in train.columns]
+        print(f"Используем все фичи ({len(feature_cols)})")
 
     n_splits = args.n_folds if args.n_folds is not None else DEFAULT_N_SPLITS
     step = "[2/3]" if args.precomputed else "[5/5]"

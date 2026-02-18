@@ -11,7 +11,6 @@ from sklearn.metrics import mean_squared_error
 from features import FEATURE_COLS
 from metrics import mean_ndcg_at_k
 
-# Единый источник для train и feature_selection
 DEFAULT_N_SPLITS = 7
 
 DEFAULT_PARAMS = {
@@ -26,7 +25,7 @@ DEFAULT_PARAMS = {
 
 
 def get_rank_model_params(**overrides):
-    """Параметры для CatBoostRanker. Используется в train и feature_selection."""
+    """Параметры для CatBoostRanker."""
     p = {**DEFAULT_PARAMS, **overrides}
     result = {
         "iterations": p["iterations"],
