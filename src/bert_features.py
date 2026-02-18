@@ -61,9 +61,11 @@ def build_bert_features(
     import torch
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    # Больший batch на GPU ускоряет encode
-    eff_batch = min(batch_size * 4, 512) if device == "cuda" else batch_size
+    # T4/GPU: batch 256 даёт прирост; FP16 — ещё ~1.5–2x
+    eff_batch = 256 if device == "cuda" else batch_size
     model = SentenceTransformer(model_name, device=device)
+    if device == "cuda":
+        model = model.half()
 
     # Query vs org_name; normalize_embeddings: cosine = dot product
     queries_raw = df["query"].fillna("").astype(str).tolist()
