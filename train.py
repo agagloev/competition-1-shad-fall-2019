@@ -29,7 +29,7 @@ def _mean_ndcg(y_true, y_pred, group_id, k=10):
 
 def train_and_predict(train_df, test_df, feature_cols=None, n_splits=5, **kwargs):
     """
-    Обучение CatBoostRanker с GroupKFold, YetiRank.
+    Обучение CatBoostRanker с GroupKFold, LambdaMart.
     feature_cols: список фичей (по умолчанию FEATURE_COLS).
     kwargs переопределяют DEFAULT_PARAMS.
     """
@@ -51,7 +51,7 @@ def train_and_predict(train_df, test_df, feature_cols=None, n_splits=5, **kwargs
         "min_data_in_leaf": params.get("min_data_in_leaf", 20),
         "subsample": params.get("subsample", 0.8),
         "verbose": 0,
-        "loss_function": "YetiRank:permutations=10",
+        "loss_function": "LambdaMart",
     }
 
     for fold, (tr_idx, val_idx) in enumerate(gkf.split(X_train, y_train, group_id_train)):

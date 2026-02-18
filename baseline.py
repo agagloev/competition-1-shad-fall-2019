@@ -88,7 +88,7 @@ def main():
             print(f"Используем все фичи ({len(feature_cols)})")
 
     step = "[2/3]" if args.precomputed else "[5/5]"
-    print(f"\n{step} Обучение CatBoostRanker ({args.n_folds}-fold GroupKFold, YetiRankPairwise)...")
+    print(f"\n{step} Обучение CatBoostRanker ({args.n_folds}-fold GroupKFold, LambdaMart)...")
     _, test_preds = train_and_predict(
         train, test, feature_cols=feature_cols, n_splits=args.n_folds
     )
