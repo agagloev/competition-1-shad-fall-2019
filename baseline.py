@@ -13,6 +13,7 @@ warnings.filterwarnings("ignore")
 
 from data import load_all, save_submission
 from features import extract_features, build_idf_from_corpus, FEATURE_COLS
+from precompute import load_precomputed_features, has_legacy_precomputed, has_modular_precomputed
 from train import train_and_predict, DEFAULT_N_SPLITS
 
 DATA_DIR = Path(__file__).parent
@@ -42,6 +43,13 @@ def main():
         default=None,
         help=f"Количество фолдов GroupKFold (default {DEFAULT_N_SPLITS})",
     )
+    parser.add_argument(
+        "--verbose",
+        type=int,
+        default=0,
+        metavar="N",
+        help="CatBoost verbose: каждые N iter печать learn/test. 100 — для диагностики пере/недообучения",
+    )
     args = parser.parse_args()
 
     feature_cols = None
@@ -54,13 +62,19 @@ def main():
 
     if args.precomputed:
         feat_dir = DATA_DIR / "precomputed"
-        train_path = feat_dir / "train_features.parquet"
-        test_path = feat_dir / "test_features.parquet"
-        if not train_path.exists():
-            raise FileNotFoundError(f"Сначала: python precompute.py (нет {train_path})")
-        print("[1/3] Загрузка precomputed фичей...")
-        train = pd.read_parquet(train_path)
-        test = pd.read_parquet(test_path)
+        if has_modular_precomputed():
+            print("[1/3] Загрузка precomputed фичей (по группам)...")
+            train, test = load_precomputed_features()
+        elif has_legacy_precomputed():
+            train_path = feat_dir / "train_features.parquet"
+            test_path = feat_dir / "test_features.parquet"
+            print("[1/3] Загрузка precomputed (монолитный формат)...")
+            train = pd.read_parquet(train_path)
+            test = pd.read_parquet(test_path)
+        else:
+            raise FileNotFoundError(
+                "Нет precomputed фичей. Запустите: python precompute.py [--no-bert]"
+            )
         if feature_cols is None:
             feature_cols = [c for c in FEATURE_COLS if c in train.columns]
             print(f"Используем все фичи ({len(feature_cols)})")
@@ -90,8 +104,10 @@ def main():
     n_splits = args.n_folds if args.n_folds is not None else DEFAULT_N_SPLITS
     step = "[2/3]" if args.precomputed else "[5/5]"
     print(f"\n{step} Обучение CatBoostRanker ({n_splits}-fold GroupKFold, LambdaMart)...")
+    if args.verbose:
+        print("  (learn=тренировка, test=валидация. learn>>test=переобучение, оба низкие=недообучение)")
     _, test_preds = train_and_predict(
-        train, test, feature_cols=feature_cols, n_splits=n_splits
+        train, test, feature_cols=feature_cols, n_splits=n_splits, verbose=args.verbose
     )
 
     print("\nСохранение submission...")

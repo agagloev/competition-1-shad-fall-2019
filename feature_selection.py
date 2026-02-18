@@ -163,14 +163,19 @@ def main():
     )
     args = parser.parse_args()
 
-    train_path = FEATURES_DIR / "train_features.parquet"
-    if not train_path.exists():
-        raise FileNotFoundError(
-            f"Сначала запустите: python precompute.py\nОжидался файл: {train_path}"
-        )
+    from precompute import load_precomputed_features, has_modular_precomputed, has_legacy_precomputed
 
-    print(f"Загрузка {train_path}...")
-    train_df = pd.read_parquet(train_path)
+    if has_modular_precomputed():
+        print("Загрузка precomputed (по группам)...")
+        train_df, _ = load_precomputed_features()
+    elif has_legacy_precomputed():
+        train_path = FEATURES_DIR / "train_features.parquet"
+        print(f"Загрузка {train_path}...")
+        train_df = pd.read_parquet(train_path)
+    else:
+        raise FileNotFoundError(
+            "Сначала запустите: python precompute.py\nОжидались файлы в precomputed/"
+        )
 
     available = [c for c in FEATURE_COLS if c in train_df.columns]
     print(f"Доступно фичей: {len(available)}")

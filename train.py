@@ -28,7 +28,7 @@ DEFAULT_PARAMS = {
 def get_rank_model_params(**overrides):
     """Параметры для CatBoostRanker. Используется в train и feature_selection."""
     p = {**DEFAULT_PARAMS, **overrides}
-    return {
+    result = {
         "iterations": p["iterations"],
         "learning_rate": p["learning_rate"],
         "depth": p["depth"],
@@ -37,6 +37,9 @@ def get_rank_model_params(**overrides):
         "verbose": p.get("verbose", 0),
         "loss_function": p["loss_function"],
     }
+    if "l2_leaf_reg" in p:
+        result["l2_leaf_reg"] = p["l2_leaf_reg"]
+    return result
 
 
 def _mean_ndcg(y_true, y_pred, group_id, k=10):

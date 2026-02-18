@@ -10,6 +10,15 @@ from tqdm import tqdm
 
 tqdm.pandas()
 
+# Маппинг region_code -> типичные слова в запросах
+REGION_QUERY_WORDS = {
+    "RU": {"россия", "рф", "российск"},
+    "UA": {"украина", "украинск"},
+    "BY": {"белоруссия", "беларусь", "белорусск"},
+    "TR": {"турция", "турецк"},
+    "FR": {"франция", "французск"},
+}
+
 
 def tokenize(text):
     """Токенизация текста (слова в нижнем регистре)"""
@@ -124,6 +133,10 @@ def extract_text_features(row):
     q_bigrams = ngram_tokens(query, 2)
     o_bigrams = ngram_tokens(org_name, 2)
     bigram_jaccard = jaccard_sim(q_bigrams, o_bigrams) if (q_bigrams and o_bigrams) else 0.0
+    # Первая часть query до запятой — основной интент (тип, "суд", "ресторан")
+    query_main = query.split(",")[0].strip() if "," in query else query
+    main_tokens = tokenize(query_main)
+    query_main_jaccard = jaccard_sim(main_tokens, org_tokens) if (main_tokens and org_tokens) else 0.0
     avg_word_len_query = np.mean([len(t) for t in query_tokens]) if query_tokens else 0.0
     avg_word_len_org = np.mean([len(t) for t in org_tokens]) if org_tokens else 0.0
 
@@ -142,6 +155,7 @@ def extract_text_features(row):
         "word_count_org": word_count_org,
         "cosine_sim": cos_sim,
         "bigram_jaccard": bigram_jaccard,
+        "query_main_jaccard": query_main_jaccard,
         "avg_word_len_query": avg_word_len_query,
         "avg_word_len_org": avg_word_len_org,
     }
@@ -294,7 +308,7 @@ def _haversine_km(lon1, lat1, lon2, lat2):
 
 
 def build_org_info_features(df, org_info):
-    """Названия, адрес, гео, window"""
+    """Названия, адрес, гео, window, region_code_match, has_work_intervals"""
     def calc(row):
         org_id = str(row["org_id"])
         query_tokens = tokenize(row["query"])
@@ -304,44 +318,77 @@ def build_org_info_features(df, org_info):
             best_jaccard = max(best_jaccard, jaccard_sim(query_tokens, tokenize(n)))
         addr_jaccard = jaccard_sim(query_tokens, tokenize(addr)) if addr else 0.0
 
+        # region_code_match: query содержит страну, совпадающую с org
+        region_code_match = 0.0
+        has_work_intervals = 0.0
+        if org_id in org_info:
+            o = org_info[org_id]
+            rc = o.get("address", {}).get("region_code", "")
+            if rc and rc in REGION_QUERY_WORDS:
+                region_words = REGION_QUERY_WORDS[rc]
+                if any(t == w or t.startswith(w) for t in query_tokens for w in region_words):
+                    region_code_match = 1.0
+            wi = o.get("work_intervals", [])
+            has_work_intervals = 1.0 if wi else 0.0
+
         lon_w, lat_w = _parse_coords(row.get("window_center"))
         dw_lon, dw_lat = _parse_coords(row.get("window_size"))
         window_area = dw_lon * dw_lat if (dw_lon and dw_lat) else 0.001
 
         dist = 999.0
+        geo_in_window = 0.0
         if org_id in org_info and "address" in org_info[org_id]:
             pos = org_info[org_id]["address"].get("pos", {})
             coords = pos.get("coordinates", [])
             if len(coords) >= 2 and lon_w is not None and lat_w is not None:
                 lon_o, lat_o = float(coords[0]), float(coords[1])
-                dist_deg = ((lon_w - lon_o) ** 2 + (lat_w - lat_o) ** 2) ** 0.5
                 dist = _haversine_km(lon_w, lat_w, lon_o, lat_o)
                 window_radius = max(dw_lon or 0.1, dw_lat or 0.1) * 111  # градусы -> км
                 geo_in_window = 1.0 if dist < window_radius else 0.0
-                return best_jaccard, addr_jaccard, dist, len(names), window_area, geo_in_window
-        return best_jaccard, addr_jaccard, dist, len(names), window_area, 0.0
+        return best_jaccard, addr_jaccard, dist, len(names), window_area, geo_in_window, region_code_match, has_work_intervals
 
     result = df.apply(calc, axis=1)
     return (
         [r[0] for r in result], [r[1] for r in result], [r[2] for r in result],
         [r[3] for r in result], [r[4] for r in result], [r[5] for r in result],
+        [r[6] for r in result], [r[7] for r in result],
     )
 
 
 FEATURE_COLS = [
     "jaccard", "dice", "overlap", "query_in_org", "org_in_query",
     "query_in_org_str", "org_in_query_str", "query_len", "org_len",
-    "matching_words", "word_count_query", "word_count_org", "cosine_sim", "bigram_jaccard",
+    "matching_words", "word_count_query", "word_count_org",     "cosine_sim", "bigram_jaccard", "query_main_jaccard",
     "avg_word_len_query", "avg_word_len_org",
     "idf_overlap",
     "click_score", "num_clicks", "click_jaccard", "click_best_jaccard",
     "region",
     "rubric_jaccard", "rubric_overlap", "num_rubrics", "rubric_phrase_match",
     "org_names_best_jaccard", "address_jaccard", "geo_distance", "num_org_names",
-    "window_area", "geo_in_window",
+    "window_area", "geo_in_window", "region_code_match", "has_work_intervals",
     "jaccard_x_click", "jaccard_x_geo_close",
     "bert_cosine", "bert_dot",
 ]
+
+# Группы фичей для инкрементального precompute (--only text обновит только text_*.parquet)
+FEATURE_GROUPS = {
+    "text": [
+        "jaccard", "dice", "overlap", "query_in_org", "org_in_query",
+        "query_in_org_str", "org_in_query_str", "query_len", "org_len",
+        "matching_words", "word_count_query", "word_count_org", "cosine_sim", "bigram_jaccard",
+        "query_main_jaccard", "avg_word_len_query", "avg_word_len_org",
+    ],
+    "idf": ["idf_overlap"],
+    "clicks": ["click_score", "num_clicks", "click_jaccard", "click_best_jaccard"],
+    "rubric": ["rubric_jaccard", "rubric_overlap", "num_rubrics", "rubric_phrase_match"],
+    "org_info": [
+        "org_names_best_jaccard", "address_jaccard", "geo_distance", "num_org_names",
+        "window_area", "geo_in_window", "region_code_match", "has_work_intervals",
+    ],
+    "base": ["region"],  # из raw data
+    "interaction": ["jaccard_x_click", "jaccard_x_geo_close"],  # считаются при загрузке
+    "bert": ["bert_cosine", "bert_dot"],
+}
 
 
 def extract_features(
@@ -359,7 +406,7 @@ def extract_features(
         "jaccard", "dice", "overlap", "query_in_org", "org_in_query",
         "query_in_org_str", "org_in_query_str", "query_len", "org_len",
         "matching_words", "word_count_query", "word_count_org", "cosine_sim", "bigram_jaccard",
-        "avg_word_len_query", "avg_word_len_org",
+        "query_main_jaccard", "avg_word_len_query", "avg_word_len_org",
     ]
     for name in text_feat_names:
         df[name] = [f[name] for f in text_feats]
@@ -400,13 +447,15 @@ def extract_features(
 
     # Org info фичи
     if org_info is not None:
-        o0, o1, o2, o3, o4, o5 = build_org_info_features(df, org_info)
+        o0, o1, o2, o3, o4, o5, o6, o7 = build_org_info_features(df, org_info)
         df["org_names_best_jaccard"] = o0
         df["address_jaccard"] = o1
         df["geo_distance"] = o2
         df["num_org_names"] = o3
         df["window_area"] = np.log1p(o4)
         df["geo_in_window"] = o5
+        df["region_code_match"] = o6
+        df["has_work_intervals"] = o7
     else:
         df["org_names_best_jaccard"] = 0.0
         df["address_jaccard"] = 0.0
@@ -414,6 +463,8 @@ def extract_features(
         df["num_org_names"] = 0
         df["window_area"] = 0.0
         df["geo_in_window"] = 0.0
+        df["region_code_match"] = 0.0
+        df["has_work_intervals"] = 0.0
 
     df["region"] = df["region"].astype(int)
 
@@ -433,4 +484,74 @@ def extract_features(
         df["bert_cosine"] = 0.0
         df["bert_dot"] = 0.0
 
+    return df
+
+
+def extract_feature_group(group, df, clicks_dict=None, org_info=None, rubric_info=None, idf_dict=None, use_bert=False):
+    """
+    Извлечь только одну группу фичей. Для инкрементального precompute.
+    Возвращает df с добавленными колонками этой группы.
+    """
+    if group == "text":
+        text_feats = df.apply(extract_text_features, axis=1)
+        for name in FEATURE_GROUPS["text"]:
+            df[name] = [f[name] for f in text_feats]
+    elif group == "idf":
+        if idf_dict is not None:
+            df["idf_overlap"] = build_idf_features(df, idf_dict)
+        else:
+            df["idf_overlap"] = 0.0
+    elif group == "clicks":
+        if clicks_dict is not None:
+            c0, c1, c2, c3 = build_clicks_features(df, clicks_dict)
+            df["click_score"] = c0
+            df["num_clicks"] = np.log1p(c1)
+            df["click_jaccard"] = c2
+            df["click_best_jaccard"] = c3
+        else:
+            for c in FEATURE_GROUPS["clicks"]:
+                df[c] = 0.0
+    elif group == "rubric":
+        if org_info is not None and rubric_info is not None:
+            r0, r1, r2, r3 = build_rubric_features(df, org_info, rubric_info)
+            df["rubric_jaccard"] = r0
+            df["rubric_overlap"] = r1
+            df["num_rubrics"] = r2
+            df["rubric_phrase_match"] = r3
+        else:
+            df["rubric_jaccard"] = 0.0
+            df["rubric_overlap"] = 0.0
+            df["num_rubrics"] = 0
+            df["rubric_phrase_match"] = 0.0
+    elif group == "org_info":
+        if org_info is not None:
+            o0, o1, o2, o3, o4, o5, o6, o7 = build_org_info_features(df, org_info)
+            df["org_names_best_jaccard"] = o0
+            df["address_jaccard"] = o1
+            df["geo_distance"] = o2
+            df["num_org_names"] = o3
+            df["window_area"] = np.log1p(o4)
+            df["geo_in_window"] = o5
+            df["region_code_match"] = o6
+            df["has_work_intervals"] = o7
+        else:
+            for c in FEATURE_GROUPS["org_info"]:
+                df[c] = 0.0 if c != "geo_distance" else 999.0
+    elif group == "base":
+        df["region"] = df["region"].astype(int)
+    elif group == "interaction":
+        geo_close = (df["geo_distance"] < 10).astype(float)
+        df["jaccard_x_click"] = df["jaccard"] * df["click_score"]
+        df["jaccard_x_geo_close"] = df["jaccard"] * geo_close
+    elif group == "bert":
+        if use_bert:
+            from bert_features import build_bert_features
+            bc, bd = build_bert_features(df)
+            df["bert_cosine"] = bc
+            df["bert_dot"] = bd
+        else:
+            df["bert_cosine"] = 0.0
+            df["bert_dot"] = 0.0
+    else:
+        raise ValueError(f"Unknown group: {group}")
     return df
