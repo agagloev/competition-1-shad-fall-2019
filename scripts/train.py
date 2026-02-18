@@ -1,7 +1,7 @@
 """
-Baseline для Kaggle Competition 1 SHAD Fall 2019
-Задача: ранжирование организаций по релевантности запросу
-Запуск: python -m scripts.baseline [--n-folds N]
+Обучение и предсказание для Kaggle Competition 1 SHAD Fall 2019
+Ранжирование организаций по релевантности запросу.
+Запуск: python -m scripts.train [--n-folds N]
 
 Требует предпосчитанные фичи: python -m scripts.precompute
 """
