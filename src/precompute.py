@@ -13,18 +13,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from data import load_all, load_train, load_test
-from features import (
+from .data import load_all, load_train, load_test
+from .features import (
     build_idf_from_corpus,
     extract_feature_group,
     FEATURE_COLS,
     FEATURE_GROUPS,
 )
 
-DATA_DIR = Path(__file__).parent
-FEATURES_DIR = DATA_DIR / "precomputed"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+FEATURES_DIR = PROJECT_ROOT / "precomputed"
 
-# Группы, которые сохраняются в отдельные parquet (без base и interaction)
 SAVEABLE_GROUPS = ["text", "idf", "clicks", "rubric", "org_info", "bert"]
 
 
@@ -84,17 +83,15 @@ def load_precomputed_features():
         if not tr_path.exists() or not te_path.exists():
             raise FileNotFoundError(
                 f"Нет предпосчитанных фичей для группы {group}. "
-                f"Запустите: python precompute.py [--only {group} ...]"
+                f"Запустите: python -m scripts.precompute [--only {group} ...]"
             )
         tr_g = pd.read_parquet(tr_path)
         te_g = pd.read_parquet(te_path)
-        # убираем key cols из второго датафрейма при merge, чтобы не дублировать
         merge_cols = ["query_id", "org_id"]
         feat_cols = [c for c in tr_g.columns if c not in merge_cols]
         train_base = train_base.merge(tr_g[merge_cols + feat_cols], on=merge_cols)
         test_base = test_base.merge(te_g[merge_cols + feat_cols], on=merge_cols)
 
-    # Interaction (зависит от jaccard, click_score, geo_distance)
     geo_close_tr = (train_base["geo_distance"] < 10).astype(float)
     geo_close_te = (test_base["geo_distance"] < 10).astype(float)
     train_base["jaccard_x_click"] = train_base["jaccard"] * train_base["click_score"]
@@ -102,7 +99,6 @@ def load_precomputed_features():
     test_base["jaccard_x_click"] = test_base["jaccard"] * test_base["click_score"]
     test_base["jaccard_x_geo_close"] = test_base["jaccard"] * geo_close_te
 
-    # num_clicks_rel (относительная популярность среди кандидатов запроса)
     for base in (train_base, test_base):
         max_clicks = base.groupby("query_id")["num_clicks_raw"].transform("max")
         base["num_clicks_rel"] = np.where(max_clicks > 0, base["num_clicks_raw"] / max_clicks, 0.0)
@@ -149,8 +145,4 @@ def main():
         groups = SAVEABLE_GROUPS
 
     precompute_groups(groups, use_bert=not args.no_bert)
-    print("\nГотово. Загрузка: load_precomputed_features() или baseline --precomputed")
-
-
-if __name__ == "__main__":
-    main()
+    print("\nГотово. Загрузка: load_precomputed_features() или python -m scripts.baseline --precomputed")

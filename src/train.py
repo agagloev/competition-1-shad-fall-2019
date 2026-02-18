@@ -8,8 +8,8 @@ import catboost as cb
 from sklearn.model_selection import GroupKFold
 from sklearn.metrics import mean_squared_error
 
-from features import FEATURE_COLS
-from metrics import mean_ndcg_at_k
+from .features import FEATURE_COLS
+from .metrics import mean_ndcg_at_k
 
 DEFAULT_N_SPLITS = 7
 

@@ -129,6 +129,7 @@
 | Фича | Описание |
 |------|----------|
 | `bert_cosine` | Cosine sim эмбеддингов query и org_name |
+| `bert_click_cosine` | max(cosine(query, click_i)) по клик-запросам org |
 
 ### Interaction (произведения)
 | Фича | Описание |

@@ -406,7 +406,7 @@ FEATURE_COLS = [
     "org_names_best_jaccard", "address_jaccard", "geo_distance", "num_org_names",
     "window_area", "geo_in_window", "region_code_match", "has_work_intervals",
     "jaccard_x_click", "jaccard_x_geo_close",
-    "bert_cosine",
+    "bert_cosine", "bert_click_cosine",
 ]
 
 # Группы фичей для инкрементального precompute (--only text обновит только text_*.parquet)
@@ -430,7 +430,7 @@ FEATURE_GROUPS = {
     ],
     "base": ["region"],  # из raw data
     "interaction": ["jaccard_x_click", "jaccard_x_geo_close"],  # считаются при загрузке
-    "bert": ["bert_cosine"],
+    "bert": ["bert_cosine", "bert_click_cosine"],
 }
 
 
@@ -530,10 +530,17 @@ def extract_features(
     # BERT фичи (опционально, долго)
     if use_bert:
         print("[features] BERT фичи (загрузка модели + encode)...")
-        from bert_features import build_bert_features
-        df["bert_cosine"] = build_bert_features(df)
+        from .bert_features import build_bert_features
+        if clicks_dict is not None:
+            bc, bcc = build_bert_features(df, clicks_dict=clicks_dict)
+            df["bert_cosine"] = bc
+            df["bert_click_cosine"] = bcc
+        else:
+            df["bert_cosine"] = build_bert_features(df)
+            df["bert_click_cosine"] = 0.0
     else:
         df["bert_cosine"] = 0.0
+        df["bert_click_cosine"] = 0.0
 
     return df
 
@@ -604,10 +611,17 @@ def extract_feature_group(group, df, clicks_dict=None, org_info=None, rubric_inf
         df["jaccard_x_geo_close"] = df["jaccard"] * geo_close
     elif group == "bert":
         if use_bert:
-            from bert_features import build_bert_features
-            df["bert_cosine"] = build_bert_features(df)
+            from .bert_features import build_bert_features
+            if clicks_dict is not None:
+                bc, bcc = build_bert_features(df, clicks_dict=clicks_dict)
+                df["bert_cosine"] = bc
+                df["bert_click_cosine"] = bcc
+            else:
+                df["bert_cosine"] = build_bert_features(df)
+                df["bert_click_cosine"] = 0.0
         else:
             df["bert_cosine"] = 0.0
+            df["bert_click_cosine"] = 0.0
     else:
         raise ValueError(f"Unknown group: {group}")
     return df
