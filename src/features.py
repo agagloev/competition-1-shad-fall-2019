@@ -6,9 +6,6 @@ import re
 
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
-
-tqdm.pandas()
 
 # Маппинг region_code -> типичные слова в запросах
 REGION_QUERY_WORDS = {
@@ -228,7 +225,7 @@ def build_clicks_features(df, clicks_dict, click_idf_dict=None):
             best_j = max(best_j, jaccard_sim(query_tokens, tokenize(oq)))
         return 0.0, num_clicks_raw, click_jaccard, best_j, has_any_click, 0.0, click_idf
 
-    result = df.progress_apply(calc_row, axis=1)
+    result = df.apply(calc_row, axis=1)
     return (
         [r[0] for r in result],
         [r[1] for r in result],
@@ -331,7 +328,7 @@ def build_rubric_features(df, org_info, rubric_info):
         overlap = len(query_tokens & rubric_tokens) / max(len(query_tokens), 1)
         return jaccard, overlap, num_rubrics, phrase_match
 
-    result = df.progress_apply(calc, axis=1)
+    result = df.apply(calc, axis=1)
     return [r[0] for r in result], [r[1] for r in result], [r[2] for r in result], [r[3] for r in result]
 
 
@@ -406,7 +403,8 @@ FEATURE_COLS = [
     "org_names_best_jaccard", "address_jaccard", "geo_distance", "num_org_names",
     "window_area", "geo_in_window", "region_code_match", "has_work_intervals",
     "jaccard_x_click", "jaccard_x_geo_close",
-    "bert_cosine", "bert_click_cosine",
+    "bert_cosine", "bert_click_cosine", "bert_click_min",
+    "bert_names_max_sim", "bert_names_min_sim",
 ]
 
 # Группы фичей для инкрементального precompute (--only text обновит только text_*.parquet)
@@ -430,7 +428,7 @@ FEATURE_GROUPS = {
     ],
     "base": ["region"],  # из raw data
     "interaction": ["jaccard_x_click", "jaccard_x_geo_close"],  # считаются при загрузке
-    "bert": ["bert_cosine", "bert_click_cosine"],
+    "bert": ["bert_cosine", "bert_click_cosine", "bert_click_min", "bert_names_max_sim", "bert_names_min_sim"],
 }
 
 
@@ -531,16 +529,20 @@ def extract_features(
     if use_bert:
         print("[features] BERT фичи (загрузка модели + encode)...")
         from .bert_features import build_bert_features
-        if clicks_dict is not None:
-            bc, bcc = build_bert_features(df, clicks_dict=clicks_dict)
-            df["bert_cosine"] = bc
-            df["bert_click_cosine"] = bcc
-        else:
-            df["bert_cosine"] = build_bert_features(df)
-            df["bert_click_cosine"] = 0.0
+        bc, bcc_max, bcc_min, bnames_max, bnames_min = build_bert_features(
+            df, clicks_dict=clicks_dict, org_info=org_info,
+        )
+        df["bert_cosine"] = bc
+        df["bert_click_cosine"] = bcc_max
+        df["bert_click_min"] = bcc_min
+        df["bert_names_max_sim"] = bnames_max
+        df["bert_names_min_sim"] = bnames_min
     else:
         df["bert_cosine"] = 0.0
         df["bert_click_cosine"] = 0.0
+        df["bert_click_min"] = 0.0
+        df["bert_names_max_sim"] = 0.0
+        df["bert_names_min_sim"] = 0.0
 
     return df
 
@@ -612,16 +614,17 @@ def extract_feature_group(group, df, clicks_dict=None, org_info=None, rubric_inf
     elif group == "bert":
         if use_bert:
             from .bert_features import build_bert_features
-            if clicks_dict is not None:
-                bc, bcc = build_bert_features(df, clicks_dict=clicks_dict)
-                df["bert_cosine"] = bc
-                df["bert_click_cosine"] = bcc
-            else:
-                df["bert_cosine"] = build_bert_features(df)
-                df["bert_click_cosine"] = 0.0
+            bc, bcc_max, bcc_min, bnames_max, bnames_min = build_bert_features(
+                df, clicks_dict=clicks_dict, org_info=org_info,
+            )
+            df["bert_cosine"] = bc
+            df["bert_click_cosine"] = bcc_max
+            df["bert_click_min"] = bcc_min
+            df["bert_names_max_sim"] = bnames_max
+            df["bert_names_min_sim"] = bnames_min
         else:
-            df["bert_cosine"] = 0.0
-            df["bert_click_cosine"] = 0.0
+            for c in FEATURE_GROUPS["bert"]:
+                df[c] = 0.0
     else:
         raise ValueError(f"Unknown group: {group}")
     return df

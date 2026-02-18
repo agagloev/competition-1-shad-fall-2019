@@ -3,7 +3,7 @@
 Фичи складываются по группам в отдельные файлы — при добавлении новой фичи
 пересчитывается только её группа (precompute --only text).
 
-Запускать перед baseline --precomputed.
+Запускать перед baseline.
 """
 
 import argparse
@@ -145,4 +145,4 @@ def main():
         groups = SAVEABLE_GROUPS
 
     precompute_groups(groups, use_bert=not args.no_bert)
-    print("\nГотово. Загрузка: load_precomputed_features() или python -m scripts.baseline --precomputed")
+    print("\nГотово. Запуск: python -m scripts.baseline")
