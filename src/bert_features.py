@@ -73,11 +73,11 @@ def build_bert_features(
 
     use_tensor = device == "cuda"
     q_embs = model.encode(
-        queries, batch_size=eff_batch, show_progress_bar=False,
+        queries, batch_size=eff_batch, show_progress_bar=True,
         normalize_embeddings=True, convert_to_tensor=use_tensor,
     )
     o_embs = model.encode(
-        org_names, batch_size=eff_batch, show_progress_bar=False,
+        org_names, batch_size=eff_batch, show_progress_bar=True,
         normalize_embeddings=True, convert_to_tensor=use_tensor,
     )
     if use_tensor:
@@ -95,7 +95,7 @@ def build_bert_features(
         if unique_queries:
             q_prefixed = ["query: " + (q[:500] if len(q) > 500 else q) for q in unique_queries]
             q_click_embs = model.encode(
-                q_prefixed, batch_size=eff_batch, show_progress_bar=False,
+                q_prefixed, batch_size=eff_batch, show_progress_bar=True,
                 normalize_embeddings=True,
             )
             query_to_emb = dict(zip(unique_queries, q_click_embs))
@@ -115,7 +115,7 @@ def build_bert_features(
                 org_ranges[oid] = (start, len(prefixed))
             if all_texts:
                 all_embs = model.encode(
-                    all_texts, batch_size=eff_batch, show_progress_bar=False,
+                    all_texts, batch_size=eff_batch, show_progress_bar=True,
                     normalize_embeddings=True,
                 )
                 for oid, (start, count) in org_ranges.items():
@@ -149,7 +149,7 @@ def build_bert_features(
         if unique_names:
             prefixed_names = ["passage: " + (nm[:500] if len(nm) > 500 else nm) for nm in unique_names]
             name_embs = model.encode(
-                prefixed_names, batch_size=eff_batch, show_progress_bar=False,
+                prefixed_names, batch_size=eff_batch, show_progress_bar=True,
                 normalize_embeddings=True,
             )
             name_to_emb = dict(zip(unique_names, name_embs))
