@@ -1,8 +1,7 @@
 __pycache__/
 .venv/
 
-# Kaggle
+data/
 submission.csv
-
-# Precomputed features
 precomputed/
+catboost_info/
