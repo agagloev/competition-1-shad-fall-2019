@@ -10,6 +10,7 @@ import argparse
 import pickle
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from data import load_all, load_train, load_test
@@ -100,6 +101,11 @@ def load_precomputed_features():
     train_base["jaccard_x_geo_close"] = train_base["jaccard"] * geo_close_tr
     test_base["jaccard_x_click"] = test_base["jaccard"] * test_base["click_score"]
     test_base["jaccard_x_geo_close"] = test_base["jaccard"] * geo_close_te
+
+    # num_clicks_rel (относительная популярность среди кандидатов запроса)
+    for base in (train_base, test_base):
+        max_clicks = base.groupby("query_id")["num_clicks_raw"].transform("max")
+        base["num_clicks_rel"] = np.where(max_clicks > 0, base["num_clicks_raw"] / max_clicks, 0.0)
 
     return train_base, test_base
 

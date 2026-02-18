@@ -171,35 +171,73 @@ def build_idf_features(df, idf_dict):
     return df.apply(calc, axis=1).tolist()
 
 
-def build_clicks_features(df, clicks_dict):
+def build_click_idf(clicks_dict, min_df=2):
     """
-    clicks_dict: org_id -> list of query strings
-    Фичи: click_score, num_clicks, click_jaccard, click_best_jaccard
+    IDF по корпусу кликов. Каждая организация — один документ (объединённый текст всех её кликов).
+    Возвращает dict: word -> idf. Редкие слова получают больший вес.
     """
+    corpus = []
+    for org_id, queries in clicks_dict.items():
+        text = " ".join(q.strip().lower() for q in queries)
+        corpus.append(text)
+    return build_idf_from_corpus(corpus, min_df=min_df)
+
+
+def build_clicks_features(df, clicks_dict, click_idf_dict=None):
+    """
+    clicks_dict: org_id -> list of query strings (могут повторяться)
+    click_idf_dict: optional, для click_idf_overlap
+    Возвращает: click_score, num_clicks_raw, click_jaccard, click_best_jaccard,
+                has_any_click, click_match_freq, click_idf_overlap
+    """
+    from collections import Counter
+
     def calc_row(row):
         org_id = str(row["org_id"])
         query = str(row["query"]).strip().lower()
         query_tokens = tokenize(query)
         if org_id not in clicks_dict:
-            return 0.0, 0, 0.0, 0.0
+            return 0.0, 0, 0.0, 0.0, 0.0, 0.0, 0.0
         org_queries = [q.strip().lower() for q in clicks_dict[org_id]]
-        num_clicks = len(org_queries)
-        if query in org_queries:
-            return 1.0, num_clicks, 1.0, 1.0
-        for oq in org_queries:
-            if query in oq or oq in query:
-                return 0.5, num_clicks, 0.5, 0.5
-        # Jaccard с объединённым текстом всех кликов
+        oq_counts = Counter(org_queries)
+        num_clicks_raw = len(org_queries)
+        has_any_click = 1.0
+        match_freq = 0
+
         all_click_tokens = tokenize(" ".join(org_queries))
+        click_idf = 0.0
+        if click_idf_dict and all_click_tokens:
+            click_idf = idf_weighted_overlap(query_tokens, all_click_tokens, click_idf_dict)
+
+        if query in oq_counts:
+            match_freq = oq_counts[query]
+            return 1.0, num_clicks_raw, 1.0, 1.0, has_any_click, float(match_freq), click_idf
+
+        best_oq = None
+        for oq in oq_counts:
+            if query in oq or oq in query:
+                if best_oq is None or oq_counts[oq] > oq_counts.get(best_oq, 0):
+                    best_oq = oq
+        if best_oq is not None:
+            match_freq = oq_counts[best_oq]
+            return 0.5, num_clicks_raw, 0.5, 0.5, has_any_click, float(match_freq), click_idf
+
         click_jaccard = jaccard_sim(query_tokens, all_click_tokens) if all_click_tokens else 0.0
-        # Лучший jaccard с отдельным кликом
         best_j = 0.0
-        for oq in org_queries:
+        for oq in oq_counts:
             best_j = max(best_j, jaccard_sim(query_tokens, tokenize(oq)))
-        return 0.0, num_clicks, click_jaccard, best_j
+        return 0.0, num_clicks_raw, click_jaccard, best_j, has_any_click, 0.0, click_idf
 
     result = df.progress_apply(calc_row, axis=1)
-    return [r[0] for r in result], [r[1] for r in result], [r[2] for r in result], [r[3] for r in result]
+    return (
+        [r[0] for r in result],
+        [r[1] for r in result],
+        [r[2] for r in result],
+        [r[3] for r in result],
+        [r[4] for r in result],
+        [np.log1p(r[5]) for r in result],
+        [r[6] for r in result],
+    )
 
 
 def _get_rubric_texts(rubric_info, rubric_ids):
@@ -362,12 +400,13 @@ FEATURE_COLS = [
     "avg_word_len_query", "avg_word_len_org",
     "idf_overlap",
     "click_score", "num_clicks", "click_jaccard", "click_best_jaccard",
+    "has_any_click", "click_match_freq", "click_idf_overlap", "num_clicks_rel",
     "region",
     "rubric_jaccard", "rubric_overlap", "num_rubrics", "rubric_phrase_match",
     "org_names_best_jaccard", "address_jaccard", "geo_distance", "num_org_names",
     "window_area", "geo_in_window", "region_code_match", "has_work_intervals",
     "jaccard_x_click", "jaccard_x_geo_close",
-    "bert_cosine", "bert_dot",
+    "bert_cosine",
 ]
 
 # Группы фичей для инкрементального precompute (--only text обновит только text_*.parquet)
@@ -379,7 +418,11 @@ FEATURE_GROUPS = {
         "query_main_jaccard", "avg_word_len_query", "avg_word_len_org",
     ],
     "idf": ["idf_overlap"],
-    "clicks": ["click_score", "num_clicks", "click_jaccard", "click_best_jaccard"],
+    "clicks": [
+        "click_score", "num_clicks", "click_jaccard", "click_best_jaccard",
+        "has_any_click", "click_match_freq", "click_idf_overlap",
+        "num_clicks_raw",  # для num_clicks_rel при загрузке
+    ],
     "rubric": ["rubric_jaccard", "rubric_overlap", "num_rubrics", "rubric_phrase_match"],
     "org_info": [
         "org_names_best_jaccard", "address_jaccard", "geo_distance", "num_org_names",
@@ -387,7 +430,7 @@ FEATURE_GROUPS = {
     ],
     "base": ["region"],  # из raw data
     "interaction": ["jaccard_x_click", "jaccard_x_geo_close"],  # считаются при загрузке
-    "bert": ["bert_cosine", "bert_dot"],
+    "bert": ["bert_cosine"],
 }
 
 
@@ -420,16 +463,27 @@ def extract_features(
     # Clicks фичи
     if clicks_dict is not None:
         print("[features] Clicks фичи...")
-        c0, c1, c2, c3 = build_clicks_features(df, clicks_dict)
+        click_idf_dict = build_click_idf(clicks_dict)
+        c0, c1, c2, c3, c4, c5, c6 = build_clicks_features(df, clicks_dict, click_idf_dict)
         df["click_score"] = c0
+        df["num_clicks_raw"] = c1
         df["num_clicks"] = np.log1p(c1)
         df["click_jaccard"] = c2
         df["click_best_jaccard"] = c3
+        df["has_any_click"] = c4
+        df["click_match_freq"] = c5
+        df["click_idf_overlap"] = c6
+        max_clicks = df.groupby("query_id")["num_clicks_raw"].transform("max")
+        df["num_clicks_rel"] = np.where(max_clicks > 0, df["num_clicks_raw"] / max_clicks, 0.0)
     else:
         df["click_score"] = 0.0
         df["num_clicks"] = 0.0
         df["click_jaccard"] = 0.0
         df["click_best_jaccard"] = 0.0
+        df["has_any_click"] = 0.0
+        df["click_match_freq"] = 0.0
+        df["click_idf_overlap"] = 0.0
+        df["num_clicks_rel"] = 0.0
 
     # Rubric фичи
     if org_info is not None and rubric_info is not None:
@@ -477,12 +531,9 @@ def extract_features(
     if use_bert:
         print("[features] BERT фичи (загрузка модели + encode)...")
         from bert_features import build_bert_features
-        bc, bd = build_bert_features(df)
-        df["bert_cosine"] = bc
-        df["bert_dot"] = bd
+        df["bert_cosine"] = build_bert_features(df)
     else:
         df["bert_cosine"] = 0.0
-        df["bert_dot"] = 0.0
 
     return df
 
@@ -503,14 +554,22 @@ def extract_feature_group(group, df, clicks_dict=None, org_info=None, rubric_inf
             df["idf_overlap"] = 0.0
     elif group == "clicks":
         if clicks_dict is not None:
-            c0, c1, c2, c3 = build_clicks_features(df, clicks_dict)
+            click_idf_dict = build_click_idf(clicks_dict)
+            c0, c1, c2, c3, c4, c5, c6 = build_clicks_features(df, clicks_dict, click_idf_dict)
             df["click_score"] = c0
+            df["num_clicks_raw"] = c1
             df["num_clicks"] = np.log1p(c1)
             df["click_jaccard"] = c2
             df["click_best_jaccard"] = c3
+            df["has_any_click"] = c4
+            df["click_match_freq"] = c5
+            df["click_idf_overlap"] = c6
+            max_clicks = df.groupby("query_id")["num_clicks_raw"].transform("max")
+            df["num_clicks_rel"] = np.where(max_clicks > 0, df["num_clicks_raw"] / max_clicks, 0.0)
         else:
             for c in FEATURE_GROUPS["clicks"]:
                 df[c] = 0.0
+            df["num_clicks_rel"] = 0.0
     elif group == "rubric":
         if org_info is not None and rubric_info is not None:
             r0, r1, r2, r3 = build_rubric_features(df, org_info, rubric_info)
@@ -546,12 +605,9 @@ def extract_feature_group(group, df, clicks_dict=None, org_info=None, rubric_inf
     elif group == "bert":
         if use_bert:
             from bert_features import build_bert_features
-            bc, bd = build_bert_features(df)
-            df["bert_cosine"] = bc
-            df["bert_dot"] = bd
+            df["bert_cosine"] = build_bert_features(df)
         else:
             df["bert_cosine"] = 0.0
-            df["bert_dot"] = 0.0
     else:
         raise ValueError(f"Unknown group: {group}")
     return df

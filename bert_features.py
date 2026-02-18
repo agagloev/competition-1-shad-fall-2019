@@ -22,9 +22,9 @@ def build_bert_features(
     batch_size: int = 64,
 ):
     """
-    Строит BERT-фичи: cosine_sim и dot_product между эмбеддингами query и org_name.
+    Строит BERT-фичу: cosine sim между эмбеддингами query и org_name.
     E5 использует "query: " / "passage: " префиксы для retrieval.
-    Возвращает (bert_cosine_sim, bert_dot_product).
+    Возвращает список bert_cosine (значения в [-1, 1], обычно в [0.7, 0.95]).
     """
     from sentence_transformers import SentenceTransformer
 
@@ -33,7 +33,6 @@ def build_bert_features(
     queries_raw = df["query"].fillna("").astype(str).tolist()
     org_names_raw = df["org_name"].fillna("").astype(str).tolist()
 
-    # E5: префиксы для retrieval (query vs passage)
     queries = ["query: " + (q[:500] if len(q) > 500 else q) for q in queries_raw]
     org_names = ["passage: " + (o[:500] if len(o) > 500 else o) for o in org_names_raw]
 
@@ -41,14 +40,4 @@ def build_bert_features(
     o_embs = model.encode(org_names, batch_size=batch_size, show_progress_bar=True)
 
     bert_cosine = [_cosine_sim(q, o) for q, o in zip(q_embs, o_embs)]
-    bert_dot = [float(np.dot(q, o)) for q, o in zip(q_embs, o_embs)]
-
-    # Нормализуем dot product в [0,1] для стабильности (min-max по батчу)
-    bd_arr = np.array(bert_dot)
-    if bd_arr.max() > bd_arr.min():
-        bert_dot_norm = (bd_arr - bd_arr.min()) / (bd_arr.max() - bd_arr.min())
-    else:
-        bert_dot_norm = np.zeros_like(bd_arr)
-    bert_dot_norm = bert_dot_norm.tolist()
-
-    return bert_cosine, bert_dot_norm
+    return bert_cosine
